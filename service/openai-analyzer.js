@@ -249,3 +249,54 @@ Rispondi SOLO con JSON valido, niente markdown, niente commenti.`,
     throw new Error("Impossibile generare copy: " + outputText?.slice(0, 300));
   }
 }
+
+// Step 3: Analisi via Vision per Screenshot (Fallback)
+export async function analyzeProductFromVision(imageBuffer, mimeType = "image/jpeg") {
+  const base64Image = imageBuffer.toString('base64');
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content: "Sei un analista di dati e-commerce. Estrai informazioni strutturate da uno screenshot di una pagina prodotto AliExpress o Amazon.",
+      },
+      {
+        role: "user",
+        messages: [
+          {
+            type: "text",
+            text: `Analizza questo screenshot del prodotto e restituisci un oggetto JSON con queste chiavi:
+{
+  "title": "titolo pulito in Inglese",
+  "short_title": "3-5 parole",
+  "price": "prezzo visibile",
+  "original_price": "prezzo originale se c'è",
+  "currency": "EUR/USD",
+  "images": [],
+  "description": "breve descrizione (2-3 frasi)",
+  "features": ["5-6 benefici chiave"],
+  "category": "categoria del prodotto",
+  "target_audience": "chi lo compra"
+}
+Restituisci SOLO il JSON.`
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:${mimeType};base64,${base64Image}`
+            }
+          }
+        ]
+      }
+    ],
+    response_format: { type: "json_object" }
+  });
+
+  const outputText = response.choices[0].message.content;
+  try {
+    return JSON.parse(outputText);
+  } catch {
+    throw new Error("Impossibile analizzare lo screenshot: " + outputText?.slice(0, 300));
+  }
+}

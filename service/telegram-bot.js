@@ -14,7 +14,7 @@ const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, '../.env') });
 
 // ─── Pipeline imports (after dotenv) ───
-const { extractProductData, generateCopy } = await import('./openai-analyzer.js');
+const { extractProductData, generateCopy, analyzeProductFromVision } = await import('./openai-analyzer.js');
 const { generateLandingTemplate } = await import('./template-generator.js');
 const shopify = await import('./shopify-client.js');
 const { generateImageSet, CATEGORIES } = await import('./image-generator.js');
@@ -216,7 +216,46 @@ console.log("⚡ GOD MODE Multi-Store Bot STARTING...");
 console.log("  Tools: set_active_store, analyze_product,");
 console.log("  generate_landing, push_to_shopify,");
 console.log("  generate_images, execute_shopify_api");
+console.log("  Feature: Vision Fallback enabled");
 console.log("=========================================");
+
+// ─── Photo handler (Vision Fallback) ───
+bot.on('photo', async (msg) => {
+  const chatId = msg.chat.id;
+  const photo = msg.photo[msg.photo.length - 1]; // Highest resolution
+  
+  if (!sessions[chatId]) {
+    bot.sendMessage(chatId, "Per favore, inviami prima il tuo store URL e il token (o scrivi /start) così so dove lavorare!");
+    return;
+  }
+
+  bot.sendChatAction(chatId, 'typing');
+  bot.sendMessage(chatId, "📸 *Screenshot ricevuto!* Lo sto analizzando con l'IA per estrarre i dati del prodotto...", { parse_mode: 'Markdown' });
+
+  try {
+    const file = await bot.getFile(photo.file_id);
+    const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    const resp = await fetch(fileUrl);
+    const buffer = await resp.buffer();
+
+    const productData = await analyzeProductFromVision(buffer);
+    const state = loadState(chatId);
+    state.productData = productData;
+    saveState(chatId, state);
+
+    bot.sendMessage(chatId, `✅ *Analisi completata!*\n\n*Prodotto:* ${productData.title}\n*Prezzo:* ${productData.price} ${productData.currency}\n\nPosso generare la landing page per questo prodotto? Dimmi pure "vai" o "genera landing"!`, { parse_mode: 'Markdown' });
+
+    // Update AI history so it knows we have the product data
+    sessions[chatId].history.push({
+      role: "assistant",
+      content: `Ho analizzato lo screenshot del prodotto: ${productData.title}. I dati sono salvati nello stato. Attendo istruzioni per generare la landing.`
+    });
+
+  } catch (err) {
+    console.error("Vision Analysis Error:", err);
+    bot.sendMessage(chatId, "❌ Scusa, non sono riuscito ad analizzare correttamente la foto. Prova a mandarne una più nitida o usa un link diretto.");
+  }
+});
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
@@ -466,30 +505,39 @@ async function processWithToolLoop(chatId, session, maxIterations = 10) {
             bot.sendMessage(chatId, "🔍 Analizzando il prodotto da AliExpress...");
             bot.sendChatAction(chatId, 'typing');
 
-            const productData = await extractProductData(args.url);
-            const state = loadState(chatId);
-            state.productData = productData;
-            state.url = args.url;
-            saveState(chatId, state);
+            try {
+              const productData = await extractProductData(args.url);
+              const state = loadState(chatId);
+              state.productData = productData;
+              state.url = args.url;
+              saveState(chatId, state);
 
-            resultStr = JSON.stringify({
-              success: true,
-              title: productData.title,
-              short_title: productData.short_title,
-              price: productData.price,
-              images: (productData.images || []).length,
-              features: (productData.features || []).length,
-              category: productData.category || "N/A",
-              message: "Prodotto analizzato. Ora puoi usare generate_landing per generare la landing page."
-            });
+              resultStr = JSON.stringify({
+                success: true,
+                title: productData.title,
+                short_title: productData.short_title,
+                price: productData.price,
+                images: (productData.images || []).length,
+                features: (productData.features || []).length,
+                category: productData.category || "N/A",
+                message: "Prodotto analizzato. Ora puoi usare generate_landing per generare la landing page."
+              });
+            } catch (err) {
+              console.error("Extraction failed, suggesting vision fallback:", err.message);
+              resultStr = JSON.stringify({
+                success: false,
+                error: err.message,
+                suggestion: "AliExpress ha bloccato l'accesso automatico (Captcha/Bot detection). Chiedi all'utente di inviarti uno SCREENSHOT della pagina prodotto AliExpress: io la analizzerò automaticamente tramite Vision."
+              });
+            }
             break;
           }
 
           // ─── Tool: generate_landing ───
           case 'generate_landing': {
-            const state = loadState();
+            const state = loadState(chatId);
             if (!state.productData) {
-              resultStr = "Errore: nessun prodotto analizzato. Usa prima analyze_product con un URL AliExpress.";
+              resultStr = "Errore: nessun prodotto analizzato. Usa prima analyze_product con un URL AliExpress o inviami uno screenshot del prodotto.";
               break;
             }
 
