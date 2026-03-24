@@ -4,42 +4,44 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Step 1: Estrae dati prodotto da AliExpress via fetch + OpenAI enrichment
 export async function extractProductData(url) {
-  // Normalizza URL: .us -> .com per redirect, poi segui redirect a it.aliexpress.com
-  let cleanUrl = url.split("?")[0]; // rimuovi query params
-  let itemIdMatch = cleanUrl.match(/\/item\/(\d+)\.html/);
+  let realUrl = url;
+  
+  // Step 0: Risoluzione redirect preventiva (fondamentale per short URLs a.aliexpress.com)
+  try {
+    const redirectResp = await fetch(url, {
+      headers: { 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
+      },
+      redirect: "follow",
+    });
+    realUrl = redirectResp.url.split("?")[0];
+  } catch (err) {
+    console.warn("Redirect resolution failed, using original URL:", err.message);
+  }
+
+  // Step 1: Estrazione ID dall'URL risolto
+  let itemIdMatch = realUrl.match(/\/item\/(\d+)\.html/);
   
   if (!itemIdMatch) {
-    const urlObj = new URL(url);
+    const urlObj = new URL(realUrl);
     const productId = urlObj.searchParams.get("productId");
     if (productId) {
       itemIdMatch = [null, productId];
-      cleanUrl = `https://www.aliexpress.com/item/${productId}.html`;
     }
   }
   
   if (!itemIdMatch) throw new Error("URL AliExpress non valido: manca l'item ID");
 
-  // Step 1a: Risolvi il redirect per ottenere l'URL reale
-  let realUrl = cleanUrl.replace("aliexpress.us", "aliexpress.com");
-  try {
-    const redirectResp = await fetch(realUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      redirect: "manual",
-    });
-    const location = redirectResp.headers.get("location");
-    if (location) {
-      realUrl = location.startsWith("http") ? location : `https:${location}`;
-      realUrl = realUrl.split("?")[0];
-    }
-  } catch {
-    // usa l'URL originale se il redirect fallisce
-  }
-
   // Step 1b: Fetch della pagina per estrarre dati dal HTML
   const resp = await fetch(realUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept-Language": "en-US,en;q=0.9",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
     },
   });
 
@@ -62,9 +64,9 @@ export async function extractProductData(url) {
   }
 
   // Step 1c: Usa OpenAI per analizzare il titolo e arricchire i dati
-  const response = await openai.responses.create({
+  const response = await openai.chat.completions.create({
     model: "gpt-4o",
-    input: [
+    messages: [
       {
         role: "system",
         content: "You are a product data analyst. Given a product title and images from AliExpress, extract structured product information. Be accurate and concise.",
@@ -100,9 +102,10 @@ Return a JSON object:
 Return ONLY valid JSON.`,
       },
     ],
+    response_format: { type: "json_object" }
   });
 
-  const outputText = response.output_text;
+  const outputText = response.choices[0].message.content;
   try {
     const cleaned = outputText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const data = JSON.parse(cleaned);
@@ -119,9 +122,9 @@ Return ONLY valid JSON.`,
 // Step 2: Generazione copy per landing page
 // Output DEVE corrispondere esattamente ai campi del template-generator
 export async function generateCopy(productData, copyInstructions = "") {
-  const response = await openai.responses.create({
+  const response = await openai.chat.completions.create({
     model: "gpt-4o",
-    input: [
+    messages: [
       {
         role: "system",
         content: `Sei un copywriter esperto per e-commerce italiano. Scrivi copy di vendita in italiano colloquiale e diretto, orientato ai benefici concreti del prodotto.
@@ -238,7 +241,7 @@ Rispondi SOLO con JSON valido, niente markdown, niente commenti.`,
     ],
   });
 
-  const outputText = response.output_text || response.choices?.[0]?.message?.content;
+  const outputText = response.choices[0].message.content;
   try {
     const cleaned = outputText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     return JSON.parse(cleaned);
