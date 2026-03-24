@@ -65,6 +65,13 @@ export async function extractProductData(url) {
       },
       redirect: "follow",
     });
+
+    if (!redirectResp.ok && (url.includes("a.aliexpress.com") || url.includes("_"))) {
+      console.warn("Redirect fetch failed, trying OpenRouter fallback for short URL...");
+      const fallbackData = await fetchWithOpenRouterSearch(url);
+      return fallbackData; // Il modello restituisce già i dati completi
+    }
+
     realUrl = redirectResp.url.split("?")[0];
     
     // Se ScraperAPI ha risolto il redirect, l'URL finale potrebbe essere nel query param 'url' o nell'URL stesso
@@ -73,7 +80,10 @@ export async function extractProductData(url) {
       realUrl = u.searchParams.get("url") || realUrl;
     }
   } catch (err) {
-    console.warn("Redirect resolution failed, using original URL:", err.message);
+    console.warn("Redirect resolution failed, trying OpenRouter fallback...", err.message);
+    if (url.includes("a.aliexpress.com") || url.includes("_")) {
+       return await fetchWithOpenRouterSearch(url);
+    }
   }
 
   // Step 1: Estrazione ID dall'URL risolto
@@ -285,17 +295,10 @@ Rispondi con ESATTAMENTE questo JSON (rispetta ogni campo e numero di elementi):
     {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
     {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
     {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
-    {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
-    {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
-    {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
-    {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
-    {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
     {"name": "Nome C.", "rating": 5, "text": "testo recensione"},
-    {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
     {"name": "Nome C.", "rating": 5, "text": "testo recensione"},
     {"name": "Nome C.", "rating": 5, "text": "testo recensione"},
     {"name": "Nome C.", "rating": 4, "text": "testo recensione"},
-    {"name": "Nome C.", "rating": 5, "text": "testo recensione"},
     {"name": "Nome C.", "rating": 5, "text": "testo recensione"}
   ]
 }
@@ -303,6 +306,8 @@ Rispondi con ESATTAMENTE questo JSON (rispetta ogni campo e numero di elementi):
 Rispondi SOLO con JSON valido, niente markdown, niente commenti.`,
       },
     ],
+    response_format: { type: "json_object" },
+    max_tokens: 4096
   });
 
   const outputText = response.choices[0].message.content;
