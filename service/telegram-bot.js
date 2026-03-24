@@ -523,11 +523,11 @@ async function processWithToolLoop(chatId, session, maxIterations = 10) {
                 message: "Prodotto analizzato. Ora puoi usare generate_landing per generare la landing page."
               });
             } catch (err) {
-              console.error("Extraction failed, suggesting vision fallback:", err.message);
+              console.error("Extraction failed, suggesting scraper api or vision fallback:", err.message);
               resultStr = JSON.stringify({
                 success: false,
                 error: err.message,
-                suggestion: "AliExpress ha bloccato l'accesso automatico (Captcha/Bot detection). Chiedi all'utente di inviarti uno SCREENSHOT della pagina prodotto AliExpress: io la analizzerò automaticamente tramite Vision."
+                suggestion: "AliExpress ha bloccato l'accesso automatico (Captcha/Bot detection). Per risolvere stabilmente, inserisci una 'SCRAPER_API_KEY' nelle variabili d'ambiente di Render. In alternativa, puoi chiedermi di analizzare uno SCREENSHOT della pagina inviandomelo qui in chat."
               });
             }
             break;

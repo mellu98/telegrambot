@@ -2,21 +2,40 @@ import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Helper per fetch intelligente (usa ScraperAPI se disponibile)
+async function smartFetch(url, options = {}) {
+  const apiKey = process.env.SCRAPER_API_KEY;
+  if (apiKey && apiKey.trim() !== "") {
+    const scraperUrl = `https://api.scraperapi.com/?api_key=${apiKey}&url=${encodeURIComponent(url)}&render=false`;
+    console.log(`Using ScraperAPI for: ${url.slice(0, 50)}...`);
+    return fetch(scraperUrl, {
+      ...options,
+      headers: { ...options.headers, "X-Proxy-Provider": "ScraperAPI" }
+    });
+  }
+  return fetch(url, options);
+}
+
 // Step 1: Estrae dati prodotto da AliExpress via fetch + OpenAI enrichment
 export async function extractProductData(url) {
   let realUrl = url;
   
   // Step 0: Risoluzione redirect preventiva (fondamentale per short URLs a.aliexpress.com)
   try {
-    const redirectResp = await fetch(url, {
+    const redirectResp = await smartFetch(url, {
       headers: { 
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
       },
       redirect: "follow",
     });
     realUrl = redirectResp.url.split("?")[0];
+    
+    // Se ScraperAPI ha risolto il redirect, l'URL finale potrebbe essere nel query param 'url' o nell'URL stesso
+    if (realUrl.includes("api.scraperapi.com")) {
+      const u = new URL(realUrl);
+      realUrl = u.searchParams.get("url") || realUrl;
+    }
   } catch (err) {
     console.warn("Redirect resolution failed, using original URL:", err.message);
   }
@@ -35,13 +54,11 @@ export async function extractProductData(url) {
   if (!itemIdMatch) throw new Error("URL AliExpress non valido: manca l'item ID");
 
   // Step 1b: Fetch della pagina per estrarre dati dal HTML
-  const resp = await fetch(realUrl, {
+  const resp = await smartFetch(realUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
       "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Cache-Control": "no-cache",
-      "Pragma": "no-cache",
     },
   });
 
